@@ -45,3 +45,31 @@ kotlin {
         }
     }
 }
+
+// ─── CocoaPods delivery tasks ─────────────────────────────────────────────────
+
+tasks.register("buildIOSDebug") {
+    description = "Build iOS debug XCFramework and copy podspec for CocoaPods local integration"
+    group = "kotlin multiplatform"
+    dependsOn("assembleBusinessKitDebugXCFramework")
+    notCompatibleWithConfigurationCache("copies podspec file at execution time")
+    doLast {
+        val spec = file("businessKit.podspec")
+        val target = file("build/XCFrameworks/debug")
+        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
+        println("✅ businessKit debug built.\n   pod 'businessKit', :path => '${target}'")
+    }
+}
+
+tasks.register("buildIOSRelease") {
+    description = "Build iOS release XCFramework and copy podspec for CocoaPods local integration"
+    group = "kotlin multiplatform"
+    dependsOn("assembleBusinessKitReleaseXCFramework")
+    notCompatibleWithConfigurationCache("copies podspec file at execution time")
+    doLast {
+        val spec = file("businessKit.podspec")
+        val target = file("build/XCFrameworks/release")
+        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
+        println("✅ businessKit release built.\n   pod 'businessKit', :path => '${target}'")
+    }
+}

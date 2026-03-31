@@ -1,0 +1,10 @@
+platform :ios, '14.0'
+use_frameworks!
+
+target 'KMPGetStartedCodelab' do
+  # KMP Foundation — holds K/N runtime, stdlib, base capabilities
+  pod 'foundationKit', :path => '../foundation/build/XCFrameworks/debug'
+
+  # KMP Business — UserService, FeedService (currently self-contained, V3 goal: thin)
+  pod 'businessKit',   :path => '../business/build/XCFrameworks/debug'
+end

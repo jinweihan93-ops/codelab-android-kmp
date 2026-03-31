@@ -104,3 +104,33 @@ kotlin {
     }
 
 }
+
+// ─── CocoaPods delivery tasks ─────────────────────────────────────────────────
+// Mirror the TikTok pattern: build XCFramework, then copy the podspec next to it.
+// iOS side integrates via: pod 'foundationKit', :path => '<targetDir>'
+
+tasks.register("buildIOSDebug") {
+    description = "Build iOS debug XCFramework and copy podspec for CocoaPods local integration"
+    group = "kotlin multiplatform"
+    dependsOn("assembleFoundationKitDebugXCFramework")
+    notCompatibleWithConfigurationCache("copies podspec file at execution time")
+    doLast {
+        val spec = file("foundationKit.podspec")
+        val target = file("build/XCFrameworks/debug")
+        spec.copyTo(file("${target}/foundationKit.podspec"), overwrite = true)
+        println("✅ foundationKit debug built.\n   pod 'foundationKit', :path => '${target}'")
+    }
+}
+
+tasks.register("buildIOSRelease") {
+    description = "Build iOS release XCFramework and copy podspec for CocoaPods local integration"
+    group = "kotlin multiplatform"
+    dependsOn("assembleFoundationKitReleaseXCFramework")
+    notCompatibleWithConfigurationCache("copies podspec file at execution time")
+    doLast {
+        val spec = file("foundationKit.podspec")
+        val target = file("build/XCFrameworks/release")
+        spec.copyTo(file("${target}/foundationKit.podspec"), overwrite = true)
+        println("✅ foundationKit release built.\n   pod 'foundationKit', :path => '${target}'")
+    }
+}
