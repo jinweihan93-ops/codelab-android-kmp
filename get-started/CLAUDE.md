@@ -296,12 +296,22 @@ grep -E "GC|kotlin" /tmp/sample.txt
 - [x] ObjC 运行时验证：两套独立类层次 + dladdr 不同 image
 - [x] 跨框架 Kotlin 对象传递：`is` 检查失败 + `as` 强转 ClassCastException
 - [x] 写综合研究报告 (`v3-dual-runtime-evidence-report.md`)
+- [x] 探索所有分体运行时共享路径（A/B/C/D/E，共 5 条）
+- [x] 写分体交付路径探索报告 (`v3-split-delivery-paths-report.md`)
 
-### 下一步（Q2 待评估）
+### 各路径结论（2026-03-31 探索完毕）
 
-- [ ] Path A: 构建后脚本剥离重复符号
-- [ ] Path B: weak framework linking (`-weak_framework foundationKit`)
-- [ ] Path C: K/N 编译器自定义 flags (`-Xstatic-framework`, `-Xpartial-linkage`)
+| 路径 | 描述 | 结论 |
+|------|------|------|
+| Path A | 构建后 strip 重复符号 | ❌ strip 只删符号表，无法删代码 |
+| Path B | `isStatic = true` 静态框架 | ❌ local `t` 符号静态链接也不去重，仍 4 个 GC 线程 |
+| Path C | 重链接中间 .o 产物 | ❌ K/N 不产生中间 .o 文件 |
+| Path D | Umbrella（合并为单 XCFramework） | ✋ 技术可行但用户否决（要拆分不要合并） |
+| Path E | K/N 编译器参数 / linkerOpts | ❌ 无任何 flag 可跳过 runtime 嵌入，直接分支写死不可重定向 |
+
+**根本原因**：K/N LTO 将 runtime 与 Kotlin IR 合并编译，调用为直接 PC-relative 分支指令，iOS 二级命名空间强制隔离，无法绕过。
+
+**官方解决方案**：等待 JetBrains [KMT-2364](https://youtrack.jetbrains.com/issue/KMT-2364)（预计 1-2 年）。
 
 ---
 
