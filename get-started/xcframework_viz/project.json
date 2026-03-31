@@ -1,0 +1,6 @@
+{
+  "name": "MySDK",
+  "frameworks": [
+    { "path": "../foundation/build/xcode-frameworks/Debug/iphonesimulator26.0/foundationKit.framework", "role": "foundation" }
+  ]
+}

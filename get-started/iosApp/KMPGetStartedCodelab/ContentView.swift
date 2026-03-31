@@ -5,6 +5,7 @@
 //
 
 import SwiftUI
+import foundationKit
 
 struct ContentView: View {
     var body: some View {
@@ -12,7 +13,7 @@ struct ContentView: View {
             Image(systemName: "globe")
                 .imageScale(.large)
                 .foregroundStyle(.tint)
-            Text("Hello, KMP!")
+            Text("Hello, \(Platform_iosKt.platform())!")
         }
         .padding()
     }

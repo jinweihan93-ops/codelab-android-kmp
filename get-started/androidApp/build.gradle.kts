@@ -55,6 +55,7 @@ android {
 dependencies {
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
+    implementation(projects.foundation)
 
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
