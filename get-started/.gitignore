@@ -3,6 +3,7 @@
 .idea
 .DS_Store
 build
+build-output
 captures
 .externalNativeBuild
 .cxx
