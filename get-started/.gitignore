@@ -10,3 +10,13 @@ captures
 local.properties
 xcuserdata
 .kotlin
+
+# CocoaPods
+Pods/
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Xcode
+*.xcworkspace/xcuserdata/
+DerivedData/
