@@ -19,6 +19,7 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            export(project(":foundation"))
         }
     }
 
@@ -26,6 +27,7 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            export(project(":foundation"))
         }
     }
 
@@ -33,13 +35,14 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            export(project(":foundation"))
         }
     }
 
     sourceSets {
         commonMain {
             dependencies {
-                implementation(project(":foundation"))
+                api(project(":foundation"))
                 implementation(libs.kotlin.stdlib)
             }
         }
