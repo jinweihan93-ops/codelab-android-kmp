@@ -1,6 +1,6 @@
 # KMP V3 分体交付架构 研究记录
 
-> 本文档记录了 KMP V3 XCFramework 分体交付架构研究项目的完整过程，包含所有关键发现、代码变更和待办事项。
+> 本文档记录了 KMP V3 XCFramework 分体交付架构研究项目的完整过程，包含所有关键发现、代码变更和验证结果。
 
 ---
 
@@ -14,9 +14,12 @@
 - 两个 XCFramework 通过 CocoaPods 分别交付
 - 两套 K/N 运行时共存时是否真的互相隔离？跨框架传递 Kotlin 对象会不会崩溃？
 
+**核心结论**：双运行时问题已被 4 个维度的实证坐实。详见 `xcframework_viz/reports/v3-dual-runtime-evidence-report.md`。
+
 **相关链接**：
 - YouTrack Issue: https://youtrack.jetbrains.com/issue/KMT-2364
 - Kotlin 论坛: https://discuss.kotlinlang.org/t/feature-request-discussion-thin-kotlin-native-apple-frameworks-shared-runtime-deps-non-self-contained-framework/31018
+- 远程仓库: https://github.com/jinweihan93-ops/codelab-android-kmp
 
 ---
 
@@ -29,27 +32,33 @@ get-started/
 │   ├── build.gradle.kts
 │   ├── foundationKit.podspec
 │   └── src/commonMain/kotlin/com/example/kmp/foundation/
-│       └── Platform.kt       # platform() 函数 + expect/actual
+│       ├── Platform.kt       # platform() 函数 + expect/actual
+│       └── SharedData.kt     # 跨框架测试用 data class
 ├── business/                 # KMP Business 模块（依赖 foundation）
-│   ├── build.gradle.kts
+│   ├── build.gradle.kts      # api + export(project(":foundation"))
 │   ├── businessKit.podspec
 │   └── src/commonMain/kotlin/com/example/kmp/business/
 │       ├── UserService.kt
 │       ├── FeedService.kt
+│       ├── SharedDataProcessor.kt  # 跨框架类型检查/强转测试
 │       └── model/
 │           ├── User.kt
 │           └── FeedItem.kt
 ├── iosApp/
 │   ├── Podfile
 │   └── KMPGetStartedCodelab/
-│       └── ContentView.swift
+│       ├── ContentView.swift             # 集成所有测试的 UI
+│       ├── RuntimeDuplicateTest.swift    # ObjC runtime 双运行时检测
+│       └── KMPGetStartedCodelabApp.swift
 ├── xcframework_viz/
-│   ├── xcframework-analyzer.py   # 主分析工具
+│   ├── xcframework-analyzer.py   # XCFramework 符号分析工具
+│   ├── app-binary-analyzer.py    # App 包内嵌 framework 符号分析
 │   ├── project.json
 │   └── reports/
+│       ├── v3-dual-runtime-evidence-report.md    # 综合实证报告
+│       ├── v3-duplicate-symbol-analysis-2026-03-30.md
 │       ├── kn-xcframework-symbol-analysis-2026-03-30.md
-│       ├── business-module-design.md
-│       └── v3-duplicate-symbol-analysis-2026-03-30.md
+│       └── business-module-design.md
 └── settings.gradle.kts       # 包含 :foundation 和 :business
 ```
 
@@ -67,371 +76,139 @@ get-started/
 
 ---
 
-## 关键文件内容
+## 关键发现（已验证）
 
-### foundation/build.gradle.kts
-```kotlin
-import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+### 1. 符号重复（XCFramework 级别）
 
-plugins {
-    alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.androidKotlinMultiplatformLibrary)
-    alias(libs.plugins.androidLint)
-}
+| 类别 | foundationKit | businessKit | 重复数 | 重复率 |
+|------|-------------|------------|--------|--------|
+| K/N Runtime | 127 | 127 | **127** | **100%** |
+| Kotlin Stdlib | 651 | 769 | **651** | **100%** |
+| kotlinx | 4 | 4 | **4** | **100%** |
+| **Total** | **2368** | **2714** | **2130** | **90%** |
 
-kotlin {
-    androidLibrary {
-        namespace = "com.example.kmp.foundation"
-        compileSdk = 36
-        minSdk = 24
-    }
+### 2. 符号重复（App 包级别）
 
-    val xcfName = "foundationKit"
-    val xcf = XCFramework(xcfName)
+使用 `app-binary-analyzer.py` 分析 `.app/Frameworks/` 内的嵌入 framework：
 
-    iosX64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
-    iosArm64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
-    iosSimulatorArm64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
+| 指标 | 值 |
+|------|-----|
+| foundationKit defined symbols | 7961 |
+| businessKit defined symbols | 8351 |
+| **重复符号** | **7821 (98.2%)** |
+| K/N Runtime 重复 | 368 |
+| Kotlin Stdlib 重复 | 2048 |
 
-    sourceSets {
-        commonMain { dependencies { implementation(libs.kotlin.stdlib) } }
-        commonTest { dependencies { implementation(libs.kotlin.test) } }
-    }
-}
+### 3. 两套 GC 线程并行运行
 
-tasks.register("buildIOSDebug") {
-    description = "Build iOS debug XCFramework and copy podspec for CocoaPods local integration"
-    group = "kotlin multiplatform"
-    dependsOn("assembleFoundationKitDebugXCFramework")
-    notCompatibleWithConfigurationCache("copies podspec file at execution time")
-    doLast {
-        val spec = file("foundationKit.podspec")
-        val target = file("build/XCFrameworks/debug")
-        spec.copyTo(file("${target}/foundationKit.podspec"), overwrite = true)
-        println("✅ foundationKit debug built.\n   pod 'foundationKit', :path => '${target}'")
-    }
-}
+`sample` 采样 App 进程，发现 **4 个 K/N GC 线程**（2 组 x 2）：
 
-tasks.register("buildIOSRelease") {
-    description = "Build iOS release XCFramework and copy podspec for CocoaPods local integration"
-    group = "kotlin multiplatform"
-    dependsOn("assembleFoundationKitReleaseXCFramework")
-    notCompatibleWithConfigurationCache("copies podspec file at execution time")
-    doLast {
-        val spec = file("foundationKit.podspec")
-        val target = file("build/XCFrameworks/release")
-        spec.copyTo(file("${target}/foundationKit.podspec"), overwrite = true)
-        println("✅ foundationKit release built.\n   pod 'foundationKit', :path => '${target}'")
-    }
-}
+```
+Thread_90456540: GC Timer thread    ← (in foundationKit)
+Thread_90456541: Main GC Thread     ← (in foundationKit)
+Thread_90456542: GC Timer thread    ← (in businessKit)
+Thread_90456543: Main GC Thread     ← (in businessKit)
 ```
 
-### business/build.gradle.kts
-```kotlin
-import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+每个运行时各自创建 `kotlin::RepeatedTimer`（GC 调度）和 `kotlin::gc::internal::MainGCThread`（GC 执行）。
 
-plugins {
-    alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.androidKotlinMultiplatformLibrary)
+### 4. 两套独立 ObjC 类层次
+
+- `FoundationKitBase` (26 classes) ≠ `BusinessKitBase` (31 classes)
+- `dladdr` 证明来自不同 dylib image
+- `objc_copyClassList` 枚举出两套完整的 K/N 基础类（Number, Boolean, KListAsNSArray 等）
+
+### 5. 跨框架 Kotlin 对象不兼容
+
+- `foundationKit.SharedData` 和 `businessKit.SharedData` 在 Swift 层面是不同类型
+- `processor.validateAsSharedData(foundationObj)` → **false**（Kotlin `is` 检查失败）
+- `processor.forceProcessAny(foundationObj)` → **ClassCastException** 崩溃
+- 根因：两个运行时为同一个 Kotlin class 生成了不同的 `typeInfo` 指针
+
+### 6. iOS Two-Level Namespace 为什么不崩溃
+
+iOS 动态链接器使用 **two-level namespace**：每个 dylib/framework 有独立的符号命名空间，重复符号不会冲突。这使得两套运行时可以并行存在，但也意味着无法真正"共享"基础 runtime。
+
+---
+
+## 关键文件说明
+
+### business/build.gradle.kts 关键配置
+
+```kotlin
+// framework 中 export foundation 类型到 ObjC header
+iosX64 {
+    binaries.framework {
+        baseName = xcfName
+        xcf.add(this)
+        export(project(":foundation"))  // re-export 到 ObjC header
+    }
 }
 
-kotlin {
-    androidLibrary {
-        namespace = "com.example.kmp.business"
-        compileSdk = 36
-        minSdk = 24
-    }
-
-    val xcfName = "businessKit"
-    val xcf = XCFramework(xcfName)
-
-    iosX64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
-    iosArm64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
-    iosSimulatorArm64 { binaries.framework { baseName = xcfName; xcf.add(this) } }
-
-    sourceSets {
-        commonMain {
-            dependencies {
-                implementation(project(":foundation"))
-                implementation(libs.kotlin.stdlib)
-            }
+sourceSets {
+    commonMain {
+        dependencies {
+            api(project(":foundation"))  // api 而非 implementation
+            implementation(libs.kotlin.stdlib)
         }
     }
 }
+```
 
-tasks.register("buildIOSDebug") {
-    description = "Build iOS debug XCFramework and copy podspec for CocoaPods local integration"
-    group = "kotlin multiplatform"
-    dependsOn("assembleBusinessKitDebugXCFramework")
-    notCompatibleWithConfigurationCache("copies podspec file at execution time")
-    doLast {
-        val spec = file("businessKit.podspec")
-        val target = file("build/XCFrameworks/debug")
-        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
-        println("✅ businessKit debug built.\n   pod 'businessKit', :path => '${target}'")
-    }
-}
+### foundation/SharedData.kt — 跨框架测试用
 
-tasks.register("buildIOSRelease") {
-    description = "Build iOS release XCFramework and copy podspec for CocoaPods local integration"
-    group = "kotlin multiplatform"
-    dependsOn("assembleBusinessKitReleaseXCFramework")
-    notCompatibleWithConfigurationCache("copies podspec file at execution time")
-    doLast {
-        val spec = file("businessKit.podspec")
-        val target = file("build/XCFrameworks/release")
-        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
-        println("✅ businessKit release built.\n   pod 'businessKit', :path => '${target}'")
-    }
+```kotlin
+data class SharedData(val id: Int, val message: String)
+
+fun createSharedData(id: Int, message: String): SharedData = SharedData(id, message)
+fun describeSharedData(data: SharedData): String = "SharedData(id=${data.id}, message='${data.message}')"
+```
+
+### business/SharedDataProcessor.kt — 类型检查/强转测试
+
+```kotlin
+class SharedDataProcessor {
+    fun processSharedData(data: SharedData): String = ...
+    fun validateAsSharedData(data: Any): Boolean = data is SharedData  // 跨框架返回 false
+    fun forceProcessAny(data: Any): String { val sd = data as SharedData; ... }  // 跨框架 ClassCastException
+    fun createLocalSharedData(id: Int, message: String): SharedData = SharedData(id, message)
 }
 ```
 
-### foundation/foundationKit.podspec
-```ruby
-Pod::Spec.new do |spec|
-  spec.name                  = 'foundationKit'
-  spec.version               = '0.1.0'
-  spec.summary               = 'KMP Foundation XCFramework'
-  spec.description           = 'Kotlin Multiplatform Foundation module. Provides platform(), carries K/N runtime + stdlib.'
-  spec.homepage              = 'https://github.com/example/kmp-get-started'
-  spec.license               = { :type => 'Apache-2.0' }
-  spec.author                = { 'KMP Team' => 'kmp@example.com' }
-  spec.source                = { :path => '.' }
-  spec.ios.deployment_target = '14.0'
-  spec.vendored_frameworks   = 'foundationKit.xcframework'
-end
-```
+### iosApp/RuntimeDuplicateTest.swift — 运行时双份检测
 
-### business/businessKit.podspec
-```ruby
-Pod::Spec.new do |spec|
-  spec.name                  = 'businessKit'
-  spec.version               = '0.1.0'
-  spec.summary               = 'KMP Business XCFramework — UserService, FeedService'
-  spec.description           = 'Kotlin Multiplatform Business module. Provides UserService and FeedService. Depends on foundationKit.'
-  spec.homepage              = 'https://github.com/example/kmp-get-started'
-  spec.license               = { :type => 'Apache-2.0' }
-  spec.author                = { 'KMP Team' => 'kmp@example.com' }
-  spec.source                = { :path => '.' }
-  spec.ios.deployment_target = '14.0'
-  spec.vendored_frameworks   = 'businessKit.xcframework'
-  spec.dependency 'foundationKit'
-end
-```
-
-### iosApp/Podfile
-```ruby
-platform :ios, '14.0'
-use_frameworks!
-target 'KMPGetStartedCodelab' do
-  pod 'foundationKit', :path => '../foundation/build/XCFrameworks/debug'
-  pod 'businessKit',   :path => '../business/build/XCFrameworks/debug'
-end
-```
-
-### iosApp/KMPGetStartedCodelab/ContentView.swift
-```swift
-import SwiftUI
-import foundationKit
-import businessKit
-
-struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, \(Platform_iosKt.platform())!")
-
-            let userService = UserService()
-            let tag = userService.formatUserTag(user: userService.currentUser())
-            Text("User: \(tag)")
-        }
-        .padding()
-    }
-}
-```
+3 个子测试：
+- `testSeparateClassHierarchies()` — `NSClassFromString` 对比 FoundationKitBase vs BusinessKitBase
+- `testDifferentDylibImages()` — `dladdr` 检查类所在的 dylib image
+- `testDuplicateObjCClasses()` — `objc_copyClassList` 枚举所有 K/N 前缀类
 
 ---
 
-## Business 模块代码
+## 分析工具
 
-### model/User.kt
-```kotlin
-package com.example.kmp.business.model
-
-data class User(val id: String, val name: String, val platform: String)
-```
-
-### model/FeedItem.kt
-```kotlin
-package com.example.kmp.business.model
-
-data class FeedItem(val id: String, val title: String, val author: User)
-```
-
-### UserService.kt
-```kotlin
-package com.example.kmp.business
-
-import com.example.kmp.business.model.User
-import com.example.kmp.foundation.platform
-
-class UserService {
-    fun currentUser(): User = User(
-        id = "u001",
-        name = "KMP User",
-        platform = platform()   // 调用 foundation 的 platform()
-    )
-
-    fun formatUserTag(user: User): String = "@${user.name}[${user.platform}]"
-}
-```
-
-### FeedService.kt
-```kotlin
-package com.example.kmp.business
-
-import com.example.kmp.business.model.FeedItem
-import com.example.kmp.business.model.User
-
-class FeedService {
-    fun generateFeed(count: Int): List<FeedItem> = (1..count).map { i ->
-        FeedItem(
-            id = "feed_$i",
-            title = "Feed Item $i",
-            author = User("u$i", "Author $i", "iOS")
-        )
-    }
-}
-```
-
----
-
-## 关键发现
-
-### 1. K/N 自包含 XCFramework 特性
-
-每个 K/N 编译的 XCFramework 默认会将完整的 K/N runtime + Kotlin stdlib 打包进去：
-- foundationKit.xcframework：foundation 逻辑 + **runtime + stdlib**
-- businessKit.xcframework：business 逻辑 + **完整一份** runtime + stdlib（重复！）
-
-### 2. 符号重复分析结果（xcframework-analyzer.py）
-
-| 类别 | 符号数 |
-|------|--------|
-| 总重复符号 | **2092 / 2626 (80%)** |
-| K/N Runtime 符号（`_ZN12_GLOBAL__N_1`） | 127 |
-| Kotlin Stdlib 符号（`_ZN6kotlin`） | 651 |
-| 其他重复符号 | 1314 |
-
-### 3. 为什么 App 不崩溃？（iOS Two-Level Namespace）
-
-iOS 动态链接器使用 **two-level namespace**：
-- 每个 dylib/framework 有独立的符号命名空间
-- 重复符号不会冲突，各自保留一份
-- `foundationKit.framework` 有自己的 K/N runtime 实例
-- `businessKit.framework` 有自己的 K/N runtime 实例
-- **两套运行时并行存在，互不干扰**
-
-这就是 V3 分体架构的核心问题：无法真正"共享"基础 runtime，每个 XCFramework 都是完全独立的世界。
-
-### 4. ObjC 类层次隔离（关键证据）
-
-两个框架各自独立的 runtime 会创建各自的 ObjC root class：
-- `foundationKit.framework` → `FoundationKitBase`（K/N runtime A 的根类）
-- `businessKit.framework` → `BusinessKitBase`（K/N runtime B 的根类）
-
-这是**同一个** Kotlin `KotlinBase` 类，但在两个完全独立的 ObjC 类层次中！
-
-```swift
-// 两套运行时的直接证据
-let fbClass = NSClassFromString("FoundationKitBase")
-let bbClass = NSClassFromString("BusinessKitBase")
-// fbClass != bbClass → 两套独立运行时的直接证据
-```
-
-### 5. C++ Symbol Mangling 规则
-
-K/N runtime 符号的识别模式：
-- `_ZN12_GLOBAL__N_1` = C++ anonymous namespace（K/N runtime 内部）
-- `_ZN6kotlin` = `kotlin::` namespace（K/N stdlib）
-- `_ZN5konan` = `konan::` namespace（K/N platform）
-
----
-
-## 待验证（三步骤）
-
-### ✅ 已完成：App 跑起来了
-App 成功运行，同时调用了 foundationKit（`platform()`）和 businessKit（`UserService`），无崩溃。
-
-### Part 1：App Bundle 符号分析（待完成）
-
-App Bundle 路径（模拟器）：
-```
-/Users/bytedance/Library/Developer/CoreSimulator/Devices/
-0C5C5629-EEC0-48DD-89BB-8B5138B9E2FC/data/Containers/Bundle/Application/
-F41182DD-10C6-415C-B8A0-DECBB578DE7A/KMPGetStartedCodelab.app
-```
-
-计划：在 `xcframework-analyzer.py` 中添加 `--app PATH` 参数，扫描 `.app/Frameworks/*.framework` 目录，运行 nm 分析重复符号，确认 app 内两套运行时都存在。
-
-### Part 2：运行时确认（待完成）
-
-在 Swift 中添加运行时检查：
-```swift
-let foundationClass = NSClassFromString("FoundationKitBase")
-let businessClass = NSClassFromString("BusinessKitBase")
-print("Same class? \(foundationClass === businessClass)")  // 应该输出 false
-```
-
-### Part 3：跨框架 Kotlin 对象崩溃验证（待完成）
-
-**设计方案**：
-
-1. 在 foundation 中添加 `SharedPoint(val x: Int, val y: Int)`
-
-2. 在 business 中添加 `CrossRuntimeTest`：
-   - `createPoint(x, y)` → 用 **business** runtime 创建 SharedPoint
-   - `processPoint(p: SharedPoint)` → 接受 SharedPoint 参数
-
-3. 在 iOS build config 中对 business 模块加 `export(project(":foundation"))`（re-export 类型到 ObjC header）
-
-4. Swift 测试代码：
-```swift
-let test = CrossRuntimeTest()
-
-// ✅ business 自己创建的对象 → 正常工作
-let businessPoint = test.createPoint(x: 1, y: 2)
-let result = test.processPoint(p: businessPoint)
-
-// ❌ foundation 创建的对象 → 强转崩溃（EXC_BAD_ACCESS）
-// FoundationKitSharedPoint 和 BusinessKitSharedPoint 是不同 ObjC 类
-let foundationPoint = SharedPoint(x: 3, y: 4)  // foundation runtime
-let crash = test.processPoint(p: foundationPoint as! BusinessKitSharedPoint)
-```
-
----
-
-## XCFramework 分析工具
-
-### xcframework-analyzer.py 主要命令
+### xcframework-analyzer.py
 
 ```bash
 # Project 模式（分析 project.json 中定义的多个 XCFramework）
-python3 xcframework-analyzer.py --project project.json
+python3 xcframework-analyzer.py --project-config project.json
 
-# JSON 格式输出
-python3 xcframework-analyzer.py --project project.json --json
+# 查看 Headers / JSON / 符号列表
+python3 xcframework-analyzer.py --project-config project.json --headers
+python3 xcframework-analyzer.py --project-config project.json --json
+python3 xcframework-analyzer.py --project-config project.json --symbols
+```
 
-# 查看 Headers（ObjC API）
-python3 xcframework-analyzer.py --project project.json --headers
+### app-binary-analyzer.py
 
-# 查看重复符号详情
-python3 xcframework-analyzer.py --project project.json --duplicates
+```bash
+# 分析构建后的 .app 包内嵌入的 framework 符号
+python3 app-binary-analyzer.py path/to/KMPGetStartedCodelab.app
+python3 app-binary-analyzer.py path/to/KMPGetStartedCodelab.app --json
+python3 app-binary-analyzer.py path/to/KMPGetStartedCodelab.app --symbols
 ```
 
 ### project.json
+
 ```json
 {
   "name": "V3-prototype",
@@ -442,68 +219,51 @@ python3 xcframework-analyzer.py --project project.json --duplicates
 }
 ```
 
-### 分析工具关键修复记录
-
-1. **JSON 输出污染**：`print()` 信息混入 JSON stdout
-   - 修复：添加 `info()` helper，`--json` 时重定向到 stderr
-
-2. **Headers 路径错误**：`<slice>/Headers/` → 实际是 `<slice>/<libname>.framework/Headers/`
-   - 修复：从 plist 的 `LibraryPath` 字段读取正确路径
-
-3. **Runtime 符号漏检**：K/N runtime 使用 C++ anonymous namespace，nm 看到的是 mangled 名
-   - 修复：添加 C++ mangling 模式：
-     ```python
-     r'|_ZN12_GLOBAL__N_1|__ZN12_GLOBAL__N_1'   # anonymous namespace
-     r'|_ZN6kotlin|__ZN6kotlin'                  # kotlin:: namespace
-     r'|_ZN5konan|__ZN5konan'                    # konan:: namespace
-     ```
-
-4. **Gradle configuration cache 报错**：helper 函数捕获了 Gradle script 对象引用
-   - 修复：改为直接内联注册 task，调用 `notCompatibleWithConfigurationCache()`
-
 ---
 
 ## 构建命令
 
 ### Kotlin 模块构建
+
 ```bash
-cd /Users/bytedance/codelab-android-kmp/get-started
+cd get-started
 
-# Foundation Debug XCFramework
-./gradlew :foundation:buildIOSDebug
+# Debug XCFramework（开发用）
+./gradlew :foundation:buildIOSDebug :business:buildIOSDebug
 
-# Business Debug XCFramework
-./gradlew :business:buildIOSDebug
-
-# Release 版本
-./gradlew :foundation:buildIOSRelease
-./gradlew :business:buildIOSRelease
+# Release XCFramework（符号分析用）
+./gradlew :foundation:buildIOSRelease :business:buildIOSRelease
 ```
 
-### iOS App 集成
-```bash
-cd iosApp
-LANG=en_US.UTF-8 pod install   # 注意：必须加 LANG，否则 CocoaPods 报 encoding 错误
-```
+### iOS App 集成与构建
 
-### iOS App 构建（命令行）
 ```bash
 cd iosApp
-xcodebuild \
+LANG=en_US.UTF-8 pod install
+
+# 命令行构建
+xcodebuild build \
   -workspace KMPGetStartedCodelab.xcworkspace \
   -scheme KMPGetStartedCodelab \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  build
+  -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -derivedDataPath ./build-output
 ```
 
 ### 运行到模拟器
-```bash
-# 安装
-xcrun simctl install booted \
-  $(find ~/Library/Developer/Xcode/DerivedData -name "KMPGetStartedCodelab.app" -path "*/Debug-iphonesimulator/*" | head -1)
 
-# 启动
-xcrun simctl launch booted com.example.KMPGetStartedCodelab
+```bash
+# 安装（注意 bundle ID 中 exampe 是原 codelab 的 typo）
+xcrun simctl install booted path/to/KMPGetStartedCodelab.app
+xcrun simctl launch booted com.exampe.kmp.getstarted.KMPGetStartedCodelab
+```
+
+### GC 线程采样
+
+```bash
+# 获取 PID 后
+sample <PID> 1 -file /tmp/sample.txt
+grep -E "GC|kotlin" /tmp/sample.txt
 ```
 
 ---
@@ -513,11 +273,13 @@ xcrun simctl launch booted com.example.KMPGetStartedCodelab
 | 错误 | 原因 | 解决 |
 |------|------|------|
 | `pod install` 报 encoding 错误 | 终端 locale 不是 UTF-8 | 加前缀 `LANG=en_US.UTF-8` |
-| `import businessKit` 找不到 | typo 写成 `bussinessKit` | 检查拼写（双 s） |
+| `import businessKit` 找不到 | typo 写成 `bussinessKit` | 检查拼写 |
+| Swift 类型歧义 `ambiguous use of 'init'` | 两个模块 export 同名类型 | 用模块限定名 `foundationKit.XXX` / `businessKit.XXX` |
 | `assembleXXXXDebugXCFramework` task 找不到 | task 名依赖 xcfName 拼接 | 用 `./gradlew tasks` 查看实际 task 名 |
 | Xcode GUI Run 按钮灰色 | 没有选择真机/模拟器 | 改用命令行 xcodebuild |
-| 移除旧 Build Phase 导致失败 | pbxproj 中 reference 和 definition 都要删 | 手动编辑 project.pbxproj，删除两处引用 |
-| Gradle configuration cache 报错 | lambda 捕获了 Gradle project 引用 | 在 task 内直接使用 `file()` 而非外部引用 |
+| `nm -defined-only` 在 macOS 上不工作 | macOS nm 不支持 GNU 长参数 | 用 `nm -U`（exclude undefined） |
+| Gradle configuration cache 报错 | lambda 捕获了 Gradle project 引用 | 在 task 内直接使用 `file()` + `notCompatibleWithConfigurationCache()` |
+| `simctl launch` 失败 | Bundle ID 不正确 | 用 `plutil -p Info.plist` 查看真实 bundle ID |
 
 ---
 
@@ -528,15 +290,20 @@ xcrun simctl launch booted com.example.KMPGetStartedCodelab
 - [x] iOS App 通过 CocoaPods 集成两个 pod（`spec.dependency` 正确声明依赖）
 - [x] 移除旧的 Xcode "Compile Kotlin Framework" Build Phase
 - [x] App 成功运行，同时调用 foundation 和 business 模块
-- [x] 符号分析：确认 2092/2626 (80%) 符号重复
-- [x] 理论分析：iOS two-level namespace 解释为何运行时不崩溃
-- [x] 确认 C++ mangling 是 runtime 符号检测的关键
-- [ ] **Part 1**: 分析 app bundle 内 framework 符号（添加 `--app` 模式）
-- [ ] **Part 2**: Swift 代码验证两套 ObjC 运行时（`NSClassFromString` 对比）
-- [ ] **Part 3**: 跨框架 Kotlin 对象传递崩溃实验
-- [ ] 写综合研究报告
+- [x] 符号分析：XCFramework 级别确认 2130/2714 (78.5%) 符号重复
+- [x] 符号分析：App 包级别确认 7821/8351 (98.2%) 符号重复
+- [x] GC 线程采样：确认 4 个 GC 线程分属两个框架
+- [x] ObjC 运行时验证：两套独立类层次 + dladdr 不同 image
+- [x] 跨框架 Kotlin 对象传递：`is` 检查失败 + `as` 强转 ClassCastException
+- [x] 写综合研究报告 (`v3-dual-runtime-evidence-report.md`)
+
+### 下一步（Q2 待评估）
+
+- [ ] Path A: 构建后脚本剥离重复符号
+- [ ] Path B: weak framework linking (`-weak_framework foundationKit`)
+- [ ] Path C: K/N 编译器自定义 flags (`-Xstatic-framework`, `-Xpartial-linkage`)
 
 ---
 
-*记录时间：2026-03-30*
+*最后更新：2026-03-31*
 *项目路径：`/Users/bytedance/codelab-android-kmp/get-started`*
