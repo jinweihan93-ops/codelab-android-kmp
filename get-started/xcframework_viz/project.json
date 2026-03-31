@@ -1,6 +1,7 @@
 {
-  "name": "MySDK",
+  "name": "V3-prototype",
   "frameworks": [
-    { "path": "../foundation/build/xcode-frameworks/Debug/iphonesimulator26.0/foundationKit.framework", "role": "foundation" }
+    { "path": "../foundation/build/XCFrameworks/release/foundationKit.xcframework", "role": "foundation" },
+    { "path": "../business/build/XCFrameworks/release/businessKit.xcframework",     "role": "business"  }
   ]
 }

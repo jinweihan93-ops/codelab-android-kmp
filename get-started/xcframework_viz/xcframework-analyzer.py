@@ -46,9 +46,31 @@ from typing import Dict, List, Optional, Tuple, Set
 # ─── Symbol categories for KMP/Kotlin Native ──────────────────────────────────
 
 CATEGORIES = {
-    "kotlin_runtime":  re.compile(r'(_konan_|_Kotlin_ObjCExport_referer|kotlin\.konan\.|KonanAllocator|kotlin_native_runtime|_Kotlin_mm_|konan_objc_|_kotlin_objc|Kotlin_launchers|konanTerminate|RuntimeCheck|FreezeHook|InitializationManager|MemoryState|GarbageCollect)'),
+    "kotlin_runtime":  re.compile(
+        r'('
+        # Kotlin-prefixed C symbols (already demangled or plain)
+        r'_konan_|_Kotlin_ObjCExport_referer|kotlin\.konan\.|KonanAllocator'
+        r'|kotlin_native_runtime|_Kotlin_mm_|konan_objc_|_kotlin_objc'
+        r'|Kotlin_launchers|konanTerminate|RuntimeCheck|FreezeHook'
+        r'|InitializationManager|MemoryState|GarbageCollect'
+        # C++ mangled: kotlin:: namespace → _ZN6kotlin
+        r'|_ZN6kotlin|__ZN6kotlin'
+        # C++ mangled: konan:: namespace → _ZN5konan
+        r'|_ZN5konan|__ZN5konan'
+        # Known runtime C++ mangled patterns (anonymous namespace runtime funcs)
+        # __ZN12_GLOBAL__N_1 = anonymous namespace
+        r'|_ZN12_GLOBAL__N_1|__ZN12_GLOBAL__N_1'
+        # ObjC export runtime bridges
+        r'|_Kotlin_ObjCExport|Kotlin_ObjCExport'
+        r'|blockToKotlinImp|SwiftObject_toKotlinImp|SwiftObject_release'
+        r'|boxedBooleanToKotlinImp|convertKotlinObjectToRetained'
+        r'|getOrCreateClass|getOrCreateTypeInfo|setAssociatedTypeInfo'
+        r'|incorrectNumberFactory|incorrectNumberInitialization'
+        r'|ReportBacktraceToIosCrashLog|printlnMessage'
+        r')'
+    ),
     "kotlin_stdlib":   re.compile(r'(kfun:kotlin\.|ktypew:kotlin\.|kclass:kotlin\.|_kotlin_stdlib|kfun:#main|kfun:kotlin#)'),
-    "kotlinx":         re.compile(r'(kfun:kotlinx\.|ktypew:kotlinx\.|kclass:kotlinx\.)'),
+    "kotlinx":         re.compile(r'(kfun:kotlinx\.|ktypew:kotlinx\.|kclass:kotlinx\.|kifacetable:kotlinx\.|kintf:kotlinx\.)'),
     "objc_export":     re.compile(r'(_OBJC_CLASS_\$_|_OBJC_METACLASS_\$_|_OBJC_IVAR_\$_)'),
     "kotlin_user_api": re.compile(r'(kfun:|ktypew:|kclass:)'),
     "cinterop":        re.compile(r'(cinterop_|_knbridge|_kn_objc_|interop_)'),
@@ -120,7 +142,7 @@ class XCFrameworkAnalyzer:
         self.path = Path(path).resolve()
         if not self.path.exists():
             raise FileNotFoundError(f"Not found: {self.path}")
-        if not self.path.name.endswith(".framework"):
+        if not self.path.name.endswith(".xcframework"):
             raise ValueError(f"Not an XCFramework: {self.path.name}")
         self.info = self._read_plist()
         self.slices: List[SliceInfo] = []
@@ -174,16 +196,24 @@ class XCFrameworkAnalyzer:
     def _get_linked_libs(self, binary: Path) -> Tuple[List[str], List[str]]:
         out = self._run(["otool", "-L", str(binary)])
         libs, frameworks = [], []
+        seen_lines = set()
+        seen_frameworks = set()
         for line in out.splitlines()[1:]:
             line = line.strip().split("(")[0].strip()
-            if not line:
+            if not line or line in seen_lines:
                 continue
+            seen_lines.add(line)
             if ".framework/" in line:
                 m = re.search(r'(\w+)\.framework', line)
                 if m:
-                    frameworks.append(m.group(1))
+                    name = m.group(1)
+                    if name not in seen_frameworks:
+                        seen_frameworks.add(name)
+                        frameworks.append(name)
             else:
                 libs.append(line)
+        # deduplicate libs too
+        libs = list(dict.fromkeys(libs))
         return libs, frameworks
 
     def _get_section_sizes(self, binary: Path, arch: Optional[str] = None) -> Dict[str, int]:
@@ -269,9 +299,9 @@ class Project:
             json.dump(cfg, f, indent=2)
         print(f"Project config saved to {output_path}")
 
-    def analyze(self):
+    def analyze(self, verbose_stream=None):
         for entry in self.entries:
-            print(f"  Analyzing {Path(entry.path).name} ...")
+            print(f"  Analyzing {Path(entry.path).name} ...", file=verbose_stream or sys.stdout)
             az = XCFrameworkAnalyzer(entry.path)
             az.analyze()
             self.analyzers.append((entry, az))
@@ -476,7 +506,13 @@ def print_headers(analyzer: XCFrameworkAnalyzer):
     print(f"{'='*70}")
     for lib_entry in analyzer.info.get("AvailableLibraries", []):
         identifier = lib_entry.get("LibraryIdentifier", "")
-        headers_path = analyzer.path / identifier / "Headers"
+        lib_path = lib_entry.get("LibraryPath", "")
+        # Headers are inside the .framework bundle: <slice>/<framework>/Headers/
+        framework_dir = analyzer.path / identifier / lib_path
+        headers_path = framework_dir / "Headers"
+        if not headers_path.exists():
+            # fallback: old layout
+            headers_path = analyzer.path / identifier / "Headers"
         if not headers_path.exists():
             continue
         print(f"\n  Slice: {identifier}")
@@ -558,29 +594,33 @@ def main():
 
     project = None
 
+    def info(msg):
+        """Print progress info; redirect to stderr when --json is active to keep stdout clean."""
+        print(msg, file=sys.stderr if args.json else sys.stdout)
+
     if args.project:
-        print(f"Loading project from directory: {args.project}")
+        info(f"Loading project from directory: {args.project}")
         project = Project.from_directory(args.project)
     elif args.project_config:
-        print(f"Loading project config: {args.project_config}")
+        info(f"Loading project config: {args.project_config}")
         project = Project.from_config(args.project_config)
 
     if project:
         if args.save_project:
             project.save_config(args.save_project)
-        print(f"Analyzing {len(project.entries)} frameworks ...")
-        project.analyze()
+        info(f"Analyzing {len(project.entries)} frameworks ...")
+        project.analyze(verbose_stream=sys.stderr if args.json else None)
         if args.json:
             print(output_json_project(project))
         else:
-            print_project_summary(project, show_symbols=args.symbols, filter_pattern=args.filter)
+            print_project_summary(project, show_symbols=args.symbols or bool(args.filter), filter_pattern=args.filter)
         return
 
     if not args.xcframework:
         parser.print_help()
         sys.exit(1)
 
-    print(f"Analyzing {args.xcframework} ...")
+    info(f"Analyzing {args.xcframework} ...")
     analyzer = XCFrameworkAnalyzer(args.xcframework)
     analyzer.analyze()
 
@@ -588,7 +628,7 @@ def main():
         print(json.dumps(output_json_single(analyzer), indent=2))
         return
 
-    print_xcf_summary(analyzer, show_symbols=args.symbols, filter_pattern=args.filter)
+    print_xcf_summary(analyzer, show_symbols=args.symbols or bool(args.filter), filter_pattern=args.filter)
 
     if args.headers:
         print_headers(analyzer)
