@@ -22,6 +22,10 @@ kotlin {
             export(project(":foundation"))
             // KMT-2364 Consumer mode: runtime provided by foundationKit at dyld load time
             binaryOption("embedRuntime", "false")
+            // KMT-2364 phase 2: foundation klib symbols are provided by foundationKit.
+            // available_externally linkage prevents emission into businessKit binary;
+            // dyld resolves them from foundationKit so Kotlin is/as checks share class descriptors.
+            binaryOption("externalKlibs", "com.example.kmp.foundation")
             linkerOpts("-undefined", "dynamic_lookup")
         }
     }
@@ -31,8 +35,8 @@ kotlin {
             baseName = xcfName
             xcf.add(this)
             export(project(":foundation"))
-            // KMT-2364 Consumer mode: runtime provided by foundationKit at dyld load time
             binaryOption("embedRuntime", "false")
+            binaryOption("externalKlibs", "com.example.kmp.foundation")
             linkerOpts("-undefined", "dynamic_lookup")
         }
     }
@@ -42,8 +46,8 @@ kotlin {
             baseName = xcfName
             xcf.add(this)
             export(project(":foundation"))
-            // KMT-2364 Consumer mode: runtime provided by foundationKit at dyld load time
             binaryOption("embedRuntime", "false")
+            binaryOption("externalKlibs", "com.example.kmp.foundation")
             linkerOpts("-undefined", "dynamic_lookup")
         }
     }
