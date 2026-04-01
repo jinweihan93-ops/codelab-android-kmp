@@ -1,10 +1,10 @@
-# TikTok Kotlin/Native Fork — Shared Runtime POC
+# TikTok Kotlin/Native 分支 — 共享运行时 POC
 
-> **Base version**: Kotlin `v2.1.20`
-> **Release branch**: `tiktok/v2.1.20-shared-runtime`
-> **Fork location**: `/Users/bytedance/kotlin/.claire/worktrees/cool-mcnulty/`
-> **Toolchain (stable symlink)**: `~/tiktok-kn/v2.1.20-shared-runtime/`
-> **Compiler version string**: `2.1.255-SNAPSHOT` ← 用于确认工具链已生效
+> **基础版本**: Kotlin `v2.1.20`
+> **发布分支**: `tiktok/v2.1.20-shared-runtime`
+> **分支位置**: `/Users/bytedance/kotlin/.claire/worktrees/cool-mcnulty/`
+> **工具链（稳定符号链接）**: `~/tiktok-kn/v2.1.20-shared-runtime/`
+> **编译器版本字符串**: `2.1.255-SNAPSHOT` ← 用于确认工具链已生效
 
 ---
 
@@ -116,7 +116,7 @@ is AppleConfigurables -> arrayOf(
 | `kotlin-native/backend.native/.../KonanDriver.kt` | 编译器水印 |
 | `native/utils/.../ClangArgs.kt` | Xcode 26 SubFrameworks 搜索路径 |
 
-Git commits（在 `v2.1.20` tag 之上）：
+Git 提交记录（在 `v2.1.20` tag 之上）：
 ```
 8c5c90e  Add TikTok compiler watermark to Gradle build console
 e33bf21  POC: shared-runtime XCFramework compiler support (KMT-2364)
@@ -126,7 +126,7 @@ e33bf21  POC: shared-runtime XCFramework compiler support (KMT-2364)
 
 ## Demo 工程接入步骤
 
-### Step 1 — 指向 TikTok 工具链
+### 第 1 步 — 指向 TikTok 工具链
 
 ```properties
 # local.properties
@@ -138,7 +138,7 @@ kotlin.native.home=/Users/bytedance/tiktok-kn/v2.1.20-shared-runtime
 w: [TikTok KN] base=2.1.20  branch=claude/cool-mcnulty  features=shared-runtime-poc
 ```
 
-### Step 2 — Baseline 验证（embedRuntime=true，默认行为不变）
+### 第 2 步 — 基线验证（embedRuntime=true，默认行为不变）
 
 先不加任何 `binaryOption`，确认工具链可以正常编译出 framework，行为与官方 2.1.20 完全一致。
 
@@ -157,7 +157,7 @@ kotlin {
 nm FoundationSDK.framework/FoundationSDK | grep " T " | wc -l   # 期望：数千个
 ```
 
-### Step 3 — Consumer 编译验证（embedRuntime=false）
+### 第 3 步 — Consumer 编译验证（embedRuntime=false）
 
 ```kotlin
 // business/build.gradle.kts — Consumer，不嵌入 runtime
@@ -183,9 +183,9 @@ nm BusinessKit.framework/BusinessKit | grep "_AddTLSRecord\|_Kotlin_ObjCExport_r
 ```
 
 > ⚠️ 当前 POC 阶段，consumer framework 单独链接会报 `undefined symbols` 错误——
-> 这是**预期行为**，说明 runtime 确实没被嵌入。完整测试需要 Step 4。
+> 这是**预期行为**，说明 runtime 确实没被嵌入。完整测试需要第 4 步。
 
-### Step 4 — 端到端测试（两个 framework 同时加载）
+### 第 4 步 — 端到端测试（两个 framework 同时加载）
 
 Consumer framework 链接时需要 FoundationSDK 的 runtime 符号：
 
@@ -220,17 +220,17 @@ binaries.framework("BusinessKit") {
 
 | 项目 | 值 |
 |------|---|
-| Base tag | `v2.1.20` |
-| Release branch | `tiktok/v2.1.20-shared-runtime` |
+| 基础 tag | `v2.1.20` |
+| 发布分支 | `tiktok/v2.1.20-shared-runtime` |
 | 编译器版本字符串 | `2.1.255-SNAPSHOT` |
-| Toolchain symlink | `~/tiktok-kn/v2.1.20-shared-runtime` |
-| Toolchain 实体路径 | `/Users/bytedance/kotlin/.claude/worktrees/cool-mcnulty/kotlin-native/dist/` |
+| 工具链符号链接 | `~/tiktok-kn/v2.1.20-shared-runtime` |
+| 工具链实体路径 | `/Users/bytedance/kotlin/.claude/worktrees/cool-mcnulty/kotlin-native/dist/` |
 | 构建时间 | 2026-03-31 |
 
 ---
 
 ## 参考
 
-- [KMT-2364](https://youtrack.jetbrains.com/issue/KMT-2364) — JetBrains 官方 issue：Non-self-contained framework support
+- [KMT-2364](https://youtrack.jetbrains.com/issue/KMT-2364) — JetBrains 官方 issue：非自包含 framework 支持
 - 设计文档：`../xcframework_viz/kotlin_native_toolchain/shared-runtime-compiler-design.md`
 - 调查报告：`../xcframework_viz/reports/v3-split-delivery-paths-report.md`
