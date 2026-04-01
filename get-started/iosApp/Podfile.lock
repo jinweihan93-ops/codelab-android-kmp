@@ -4,19 +4,19 @@ PODS:
   - foundationKit (0.1.0)
 
 DEPENDENCIES:
-  - businessKit (from `../business/build/XCFrameworks/debug`)
-  - foundationKit (from `../foundation/build/XCFrameworks/debug`)
+  - businessKit (from `../business/build/XCFrameworks/release`)
+  - foundationKit (from `../foundation/build/XCFrameworks/release`)
 
 EXTERNAL SOURCES:
   businessKit:
-    :path: "../business/build/XCFrameworks/debug"
+    :path: "../business/build/XCFrameworks/release"
   foundationKit:
-    :path: "../foundation/build/XCFrameworks/debug"
+    :path: "../foundation/build/XCFrameworks/release"
 
 SPEC CHECKSUMS:
   businessKit: 24ec02602226c6f0ded84457e0408e645d58914f
   foundationKit: 81d20dbfe9acaa9d6d1827ff3b41d92ad1688273
 
-PODFILE CHECKSUM: 40587c37c7fd5226f2dd58ee383d82a8f8762c25
+PODFILE CHECKSUM: 0357c15ad15c0ba18cdd328ac6eb15de1c12974c
 
 COCOAPODS: 1.16.2

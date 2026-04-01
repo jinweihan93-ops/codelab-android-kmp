@@ -40,6 +40,8 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
+            binaryOption("exportRuntimeSymbols", "true")
         }
     }
 
@@ -47,6 +49,8 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
+            binaryOption("exportRuntimeSymbols", "true")
         }
     }
 
@@ -54,6 +58,8 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
+            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
+            binaryOption("exportRuntimeSymbols", "true")
         }
     }
 
