@@ -40,8 +40,12 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
-            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
+            // KMT-2364 Producer mode: prevent LTO from internalizing runtime symbols
+            // so that consumer frameworks can resolve them at dyld load time
             binaryOption("exportRuntimeSymbols", "true")
+            // KMT-2364 Producer mode: re-export kclass:/kfun: symbols for these packages
+            // after internalize pass, so consumer frameworks can resolve them via dyld flat-namespace
+            binaryOption("exportKlibSymbols", "com.example.kmp.foundation")
         }
     }
 
@@ -49,8 +53,8 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
-            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
             binaryOption("exportRuntimeSymbols", "true")
+            binaryOption("exportKlibSymbols", "com.example.kmp.foundation")
         }
     }
 
@@ -58,8 +62,8 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
-            // KMT-2364 Producer mode: export runtime symbols so consumers can share them
             binaryOption("exportRuntimeSymbols", "true")
+            binaryOption("exportKlibSymbols", "com.example.kmp.foundation")
         }
     }
 
