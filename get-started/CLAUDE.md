@@ -14,9 +14,9 @@
 - 两个 XCFramework 通过 CocoaPods 分别交付
 - 两套 K/N 运行时共存时是否真的互相隔离？跨框架传递 Kotlin 对象会不会崩溃？
 
-**核心结论**：双运行时问题已被 4 个维度的实证坐实。详见 `docs/analysis/v3-dual-runtime-evidence-report.md`。
+**核心结论**：双运行时问题已被 4 个维度的实证坐实。详见 `docs/analysis/v3-dual-runtime-problem.md`。
 
-**KMT-2364 修复结论**：通过 `exportKlibSymbols` / `externalKlibs` 编译器选项，已实现跨框架 `is`/`as` 类型检查通过（Phase 1 + Phase 2 T1–T6 全部验证）。详见 `docs/fix-reports/`。
+**KMT-2364 修复结论**：通过 `exportKlibSymbols` / `externalKlibs` 编译器选项，已实现跨框架 `is`/`as` 类型检查通过（Phase 1 + Phase 2 T1–T6 全部验证）。详见 `docs/fix-reports/kmt-2364-fix.md`。
 
 **相关链接**：
 - YouTrack Issue: https://youtrack.jetbrains.com/issue/KMT-2364
@@ -55,19 +55,12 @@ get-started/
 │       ├── RuntimeDuplicateTest.swift    # ObjC runtime 双运行时检测
 │       └── KMPGetStartedCodelabApp.swift
 ├── docs/                     # 所有研究文档（中文）
-│   ├── analysis/             # 符号分析 & 实证报告
-│   │   ├── v3-dual-runtime-evidence-report.md
-│   │   ├── v3-duplicate-symbol-analysis-2026-03-30.md
-│   │   └── kn-xcframework-symbol-analysis-2026-03-30.md
-│   ├── design/               # 架构设计 & 路径探索
-│   │   ├── business-module-design.md
-│   │   ├── v3-split-delivery-paths-report.md
-│   │   ├── shared-runtime-compiler-design.md
-│   │   └── shared-runtime-poc.md
-│   └── fix-reports/          # KMT-2364 修复报告
-│       ├── kmt-2364-fix-report.md
-│       ├── kmt-2364-phase2-fix-report.md
-│       └── kmt-2364-phase2-milestone.md
+│   ├── analysis/
+│   │   └── v3-dual-runtime-problem.md      # 双运行时问题诊断（符号/GC/ObjC/对象传递）
+│   ├── design/
+│   │   └── shared-runtime-design.md        # 路径探索（A–E）+ 编译器改造方案
+│   └── fix-reports/
+│       └── kmt-2364-fix.md                 # KMT-2364 完整修复报告（Phase 1 + Phase 2）
 ├── xcframework_viz/
 │   ├── xcframework-analyzer.py   # XCFramework 符号分析工具
 │   ├── app-binary-analyzer.py    # App 包内嵌 framework 符号分析
@@ -308,9 +301,9 @@ grep -E "GC|kotlin" /tmp/sample.txt
 - [x] GC 线程采样：确认 4 个 GC 线程分属两个框架
 - [x] ObjC 运行时验证：两套独立类层次 + dladdr 不同 image
 - [x] 跨框架 Kotlin 对象传递：`is` 检查失败 + `as` 强转 ClassCastException
-- [x] 写综合研究报告 (`docs/analysis/v3-dual-runtime-evidence-report.md`)
+- [x] 写综合研究报告 (`docs/analysis/v3-dual-runtime-problem.md`)
 - [x] 探索所有分体运行时共享路径（A/B/C/D/E，共 5 条）
-- [x] 写分体交付路径探索报告 (`docs/design/v3-split-delivery-paths-report.md`)
+- [x] 写路径探索 + 编译器改造方案 (`docs/design/shared-runtime-design.md`)
 - [x] KMT-2364 Phase 1 修复：`exportKlibSymbols` / `externalKlibs` 配置，`isCheck=true` 验证通过
 - [x] KMT-2364 Phase 2 综合测试：新增 TypeTestModels + NetworkProcessor，T1–T6 全部通过
   - T1: 数据类 is-check（RequestPayload / ResponseResult）✅
@@ -321,6 +314,7 @@ grep -E "GC|kotlin" /tmp/sample.txt
   - T6: 集合类型过滤（countSuccessInList）✅
   - T7: sealed when + 字段访问 ⚠️ 待调查（available_externally LTO 内联问题）
 - [x] 整理所有文档到 `docs/` 目录，英文文档翻译为中文
+- [x] 合并 10 个文档为 3 个（消除重叠，保留独有内容）
 
 ### 各路径结论（2026-03-31 探索完毕）
 
