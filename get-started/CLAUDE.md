@@ -14,7 +14,9 @@
 - 两个 XCFramework 通过 CocoaPods 分别交付
 - 两套 K/N 运行时共存时是否真的互相隔离？跨框架传递 Kotlin 对象会不会崩溃？
 
-**核心结论**：双运行时问题已被 4 个维度的实证坐实。详见 `xcframework_viz/reports/v3-dual-runtime-evidence-report.md`。
+**核心结论**：双运行时问题已被 4 个维度的实证坐实。详见 `docs/analysis/v3-dual-runtime-evidence-report.md`。
+
+**KMT-2364 修复结论**：通过 `exportKlibSymbols` / `externalKlibs` 编译器选项，已实现跨框架 `is`/`as` 类型检查通过（Phase 1 + Phase 2 T1–T6 全部验证）。详见 `docs/fix-reports/`。
 
 **相关链接**：
 - YouTrack Issue: https://youtrack.jetbrains.com/issue/KMT-2364
@@ -29,18 +31,20 @@
 get-started/
 ├── androidApp/               # Android 应用
 ├── foundation/               # KMP Foundation 模块（携带 runtime）
-│   ├── build.gradle.kts
+│   ├── build.gradle.kts      # exportKlibSymbols / externalKlibs 配置
 │   ├── foundationKit.podspec
 │   └── src/commonMain/kotlin/com/example/kmp/foundation/
 │       ├── Platform.kt       # platform() 函数 + expect/actual
-│       └── SharedData.kt     # 跨框架测试用 data class
+│       ├── SharedData.kt     # 跨框架测试用 data class
+│       └── TypeTestModels.kt # Phase 2 测试类型：RequestPayload/ResponseResult/NetworkState
 ├── business/                 # KMP Business 模块（依赖 foundation）
-│   ├── build.gradle.kts      # api + export(project(":foundation"))
+│   ├── build.gradle.kts      # api + export(project(":foundation")) + externalKlibs
 │   ├── businessKit.podspec
 │   └── src/commonMain/kotlin/com/example/kmp/business/
 │       ├── UserService.kt
 │       ├── FeedService.kt
 │       ├── SharedDataProcessor.kt  # 跨框架类型检查/强转测试
+│       ├── NetworkProcessor.kt     # Phase 2 跨框架处理器（Any-based dispatch）
 │       └── model/
 │           ├── User.kt
 │           └── FeedItem.kt
@@ -50,15 +54,24 @@ get-started/
 │       ├── ContentView.swift             # 集成所有测试的 UI
 │       ├── RuntimeDuplicateTest.swift    # ObjC runtime 双运行时检测
 │       └── KMPGetStartedCodelabApp.swift
+├── docs/                     # 所有研究文档（中文）
+│   ├── analysis/             # 符号分析 & 实证报告
+│   │   ├── v3-dual-runtime-evidence-report.md
+│   │   ├── v3-duplicate-symbol-analysis-2026-03-30.md
+│   │   └── kn-xcframework-symbol-analysis-2026-03-30.md
+│   ├── design/               # 架构设计 & 路径探索
+│   │   ├── business-module-design.md
+│   │   ├── v3-split-delivery-paths-report.md
+│   │   ├── shared-runtime-compiler-design.md
+│   │   └── shared-runtime-poc.md
+│   └── fix-reports/          # KMT-2364 修复报告
+│       ├── kmt-2364-fix-report.md
+│       ├── kmt-2364-phase2-fix-report.md
+│       └── kmt-2364-phase2-milestone.md
 ├── xcframework_viz/
 │   ├── xcframework-analyzer.py   # XCFramework 符号分析工具
 │   ├── app-binary-analyzer.py    # App 包内嵌 framework 符号分析
-│   ├── project.json
-│   └── reports/
-│       ├── v3-dual-runtime-evidence-report.md    # 综合实证报告
-│       ├── v3-duplicate-symbol-analysis-2026-03-30.md
-│       ├── kn-xcframework-symbol-analysis-2026-03-30.md
-│       └── business-module-design.md
+│   └── project.json
 └── settings.gradle.kts       # 包含 :foundation 和 :business
 ```
 
@@ -295,9 +308,19 @@ grep -E "GC|kotlin" /tmp/sample.txt
 - [x] GC 线程采样：确认 4 个 GC 线程分属两个框架
 - [x] ObjC 运行时验证：两套独立类层次 + dladdr 不同 image
 - [x] 跨框架 Kotlin 对象传递：`is` 检查失败 + `as` 强转 ClassCastException
-- [x] 写综合研究报告 (`v3-dual-runtime-evidence-report.md`)
+- [x] 写综合研究报告 (`docs/analysis/v3-dual-runtime-evidence-report.md`)
 - [x] 探索所有分体运行时共享路径（A/B/C/D/E，共 5 条）
-- [x] 写分体交付路径探索报告 (`v3-split-delivery-paths-report.md`)
+- [x] 写分体交付路径探索报告 (`docs/design/v3-split-delivery-paths-report.md`)
+- [x] KMT-2364 Phase 1 修复：`exportKlibSymbols` / `externalKlibs` 配置，`isCheck=true` 验证通过
+- [x] KMT-2364 Phase 2 综合测试：新增 TypeTestModels + NetworkProcessor，T1–T6 全部通过
+  - T1: 数据类 is-check（RequestPayload / ResponseResult）✅
+  - T2: 接收 A 返回 B 跨框架工作流 ✅
+  - T3: 嵌套跨框架引用存活（ResponseResult.source）✅
+  - T4: 双重 cast 往返 ✅
+  - T5: sealed class 6 种 is-check ✅
+  - T6: 集合类型过滤（countSuccessInList）✅
+  - T7: sealed when + 字段访问 ⚠️ 待调查（available_externally LTO 内联问题）
+- [x] 整理所有文档到 `docs/` 目录，英文文档翻译为中文
 
 ### 各路径结论（2026-03-31 探索完毕）
 
@@ -315,5 +338,5 @@ grep -E "GC|kotlin" /tmp/sample.txt
 
 ---
 
-*最后更新：2026-03-31*
+*最后更新：2026-04-01*
 *项目路径：`/Users/bytedance/codelab-android-kmp/get-started`*
