@@ -31,22 +31,30 @@ fun testStrongRefSurvivesGC(): Boolean {
 
 /**
  * T9 — Weak reference cleared after strong ref released and GC runs.
- * Object survives while a strong reference is held; WeakReference.get() returns null
- * after the strong ref is released and GC runs.
+ * WeakReference.get() returns null after the only strong reference goes out of scope
+ * and GC runs.
+ *
+ * Object creation is isolated in a separate function so that the RequestPayload is
+ * truly off all stack frames (and therefore off GC roots) when GC.collect() is called.
+ * If both inline in one function, the LLVM backend may retain the old pointer in a
+ * register between `strong = null` and `GC.collect()`, keeping the object alive.
  *
  * With two independent runtimes, foundationKit's WeakReference would be tracked by a
  * different GC than the one that might collect the object — this test would then fail
  * (get() would remain non-null even after GC, or the runtime would crash).
  */
+@OptIn(ExperimentalNativeApi::class)
+private fun makeWeakRef(): WeakReference<RequestPayload> {
+    // RequestPayload is a local var here; it goes off the stack when this function returns.
+    val obj = RequestPayload("/gc-weak-test")
+    return WeakReference(obj)
+}
+
 @OptIn(NativeRuntimeApi::class, ExperimentalNativeApi::class)
 fun testWeakRefClearedAfterGC(): Boolean {
-    var strong: RequestPayload? = RequestPayload("/gc-weak-test")
-    val weak = WeakReference(strong!!)
-    GC.collect()
-    if (weak.get() == null) return false  // collected too early — strong ref should protect it
-    strong = null                          // release the strong reference
-    GC.collect()
-    return weak.get() == null             // must be collected now
+    val weak = makeWeakRef()      // obj is now off all stack frames
+    GC.collect()                  // should collect the now-unreachable RequestPayload
+    return weak.get() == null     // WeakReference must be nulled after collection
 }
 
 /** Creates an object for the cross-framework GC survival test (T10/T11 in businessKit). */

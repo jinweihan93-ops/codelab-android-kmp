@@ -48,6 +48,9 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             runPhase2Tests()
                         }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            runGCTests()
+                        }
                     }
 
                     Divider()
@@ -338,7 +341,13 @@ struct ContentView: View {
             ? "✅ SINGLE SHARED GC RUNTIME VERIFIED"
             : "❌ GC SHARING ISSUE DETECTED")
 
-        NSLog("[KMT-2364-GC] GC tests: %d/%d passed", passed, total)
+        NSLog("[KMT-2364-GC] T8=%@ T9=%@ T10=%@ T11=%@ endpoint=%@ total=%d/%d",
+              t8 ? "PASS" : "FAIL",
+              t9 ? "PASS" : "FAIL",
+              t10 ? "PASS" : "FAIL",
+              t11ok ? "PASS" : "FAIL",
+              endpoint,
+              passed, total)
     }
 }
 
