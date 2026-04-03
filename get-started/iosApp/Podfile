@@ -3,10 +3,10 @@ use_frameworks!
 
 target 'KMPGetStartedCodelab' do
   # KMP Foundation — holds K/N runtime, stdlib, base capabilities (KMT-2364 Producer)
-  pod 'foundationKit', :path => '../foundation/build/XCFrameworks/debug'
+  pod 'foundationKit', :path => '../foundation/KMPFoundation/build/XCFrameworks/debug'
 
   # KMP Business — thin consumer, runtime resolved from foundationKit at dyld load time
-  pod 'businessKit',   :path => '../business/build/XCFrameworks/debug'
+  pod 'businessKit',   :path => '../business/KMPBusiness/build/XCFrameworks/debug'
 end
 
 # KMT-2364: Fix "Unable to find module dependency" on clean DerivedData builds.
@@ -24,10 +24,10 @@ post_install do |installer|
     target.build_configurations.each do |config|
       suffix = config.name == 'Release' ? 'release' : 'debug'
       extra = [
-        "\"$(PODS_ROOT)/../../foundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64-simulator\"",
-        "\"$(PODS_ROOT)/../../foundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64\"",
-        "\"$(PODS_ROOT)/../../business/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64-simulator\"",
-        "\"$(PODS_ROOT)/../../business/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64\"",
+        "\"$(PODS_ROOT)/../../foundation/KMPFoundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64-simulator\"",
+        "\"$(PODS_ROOT)/../../foundation/KMPFoundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64\"",
+        "\"$(PODS_ROOT)/../../business/KMPBusiness/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64-simulator\"",
+        "\"$(PODS_ROOT)/../../business/KMPBusiness/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64\"",
       ]
       config.build_settings['FRAMEWORK_SEARCH_PATHS'] = [
         '$(inherited)',
