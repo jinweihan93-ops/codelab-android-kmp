@@ -8,3 +8,38 @@ target 'KMPGetStartedCodelab' do
   # KMP Business — thin consumer, runtime resolved from foundationKit at dyld load time
   pod 'businessKit',   :path => '../business/build/XCFrameworks/debug'
 end
+
+# KMT-2364: Fix "Unable to find module dependency" on clean DerivedData builds.
+#
+# Xcode 15+ Explicit Module Build plans Swift module dependencies BEFORE any Build
+# Phase runs. CocoaPods' xcframeworks.sh (which copies the correct XCFramework slice
+# to XCFrameworkIntermediates) is a Build Phase — so on a clean build the intermediates
+# directory is empty when planning happens, and Xcode can't find foundationKit/businessKit.
+#
+# Fix: add the XCFramework slice directories directly to FRAMEWORK_SEARCH_PATHS so the
+# .swiftmodule files are findable at planning time regardless of DerivedData state.
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    next unless target.name == 'KMPGetStartedCodelab'
+    target.build_configurations.each do |config|
+      suffix = config.name == 'Release' ? 'release' : 'debug'
+      extra = [
+        "\"$(PODS_ROOT)/../../foundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64-simulator\"",
+        "\"$(PODS_ROOT)/../../foundation/build/XCFrameworks/#{suffix}/foundationKit.xcframework/ios-arm64\"",
+        "\"$(PODS_ROOT)/../../business/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64-simulator\"",
+        "\"$(PODS_ROOT)/../../business/build/XCFrameworks/#{suffix}/businessKit.xcframework/ios-arm64\"",
+      ]
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] = [
+        '$(inherited)',
+        *extra
+      ].join(' ')
+    end
+  end
+  installer.generated_projects.each do |project|
+    project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+      end
+    end
+  end
+end
