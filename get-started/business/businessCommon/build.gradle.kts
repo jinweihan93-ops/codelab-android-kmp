@@ -73,14 +73,6 @@ kotlin {
             }
         }
 
-        // iosBridgeMain: cinterop-using sources (BusinessBridgeSetup, BridgeClient).
-        getByName("iosArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-        getByName("iosSimulatorArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-
         iosMain {
             dependencies {
             }

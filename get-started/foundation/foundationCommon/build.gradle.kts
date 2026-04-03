@@ -87,16 +87,6 @@ kotlin {
             }
         }
 
-        // iosBridgeMain: cinterop-using sources (BridgeSetup, KMPLogger, Platform.ios).
-        // K/N 2.x cinterop klibsare target-specific; adding the same directory to each
-        // target-specific source set ensures bridge type imports resolve in both compilations.
-        getByName("iosArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-        getByName("iosSimulatorArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-
         iosMain {
             dependencies {
             }
