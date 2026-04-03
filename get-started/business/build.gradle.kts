@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -15,29 +16,21 @@ kotlin {
     val xcfName = "businessKit"
     val xcf = XCFramework(xcfName)
 
-    iosX64 {
-        binaries.framework {
-            baseName = xcfName
-            xcf.add(this)
-            export(project(":foundation"))
-            // KMT-2364 Consumer mode: runtime provided by foundationKit at dyld load time
-            binaryOption("embedRuntime", "false")
-            // KMT-2364 phase 2: foundation klib symbols are provided by foundationKit.
-            // available_externally linkage prevents emission into businessKit binary;
-            // dyld resolves them from foundationKit so Kotlin is/as checks share class descriptors.
-            binaryOption("externalKlibs", "com.example.kmp.foundation")
-            linkerOpts("-undefined", "dynamic_lookup")
-        }
-    }
-
     iosArm64 {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
-            export(project(":foundation"))
+            // KMT-2364: Do NOT re-export Foundation types — their ObjC bridge lives in
+            // foundationKit.framework only. Re-exporting causes duplicate ObjC class
+            // registration, corrupting the BackRef→ObjHeader* mapping.
+            // export(project(":foundation"))
             binaryOption("embedRuntime", "false")
             binaryOption("externalKlibs", "com.example.kmp.foundation")
-            linkerOpts("-undefined", "dynamic_lookup")
+            val suffix = if (buildType == NativeBuildType.DEBUG) "debug" else "release"
+            linkerOpts(
+                "-framework", "foundationKit",
+                "-F", "${projectDir}/../foundation/build/bin/iosArm64/${suffix}Framework"
+            )
         }
     }
 
@@ -45,10 +38,15 @@ kotlin {
         binaries.framework {
             baseName = xcfName
             xcf.add(this)
-            export(project(":foundation"))
+            // KMT-2364: Do NOT re-export Foundation types (see iosArm64 comment above).
+            // export(project(":foundation"))
             binaryOption("embedRuntime", "false")
             binaryOption("externalKlibs", "com.example.kmp.foundation")
-            linkerOpts("-undefined", "dynamic_lookup")
+            val suffix = if (buildType == NativeBuildType.DEBUG) "debug" else "release"
+            linkerOpts(
+                "-framework", "foundationKit",
+                "-F", "${projectDir}/../foundation/build/bin/iosSimulatorArm64/${suffix}Framework"
+            )
         }
     }
 
