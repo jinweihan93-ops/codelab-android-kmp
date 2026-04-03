@@ -55,7 +55,7 @@ android {
 dependencies {
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
-    implementation(project(":foundation:KMPFoundation"))
+    implementation(project(":foundation:foundationCommon"))
 
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)

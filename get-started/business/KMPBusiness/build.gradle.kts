@@ -1,92 +1,20 @@
-import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
-import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
-
-plugins {
-    alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.androidKotlinMultiplatformLibrary)
-}
-
-kotlin {
-    androidLibrary {
-        namespace = "com.example.kmp.business"
-        compileSdk = 36
-        minSdk = 24
-    }
-
-    val xcfName = "businessKit"
-    val xcf = XCFramework(xcfName)
-
-    iosArm64 {
-        compilations["main"].cinterops.create("businessBridge") {
-            defFile(project.file("../business-bridge/businessBridge.def"))
-            includeDirs(project.file("../business-bridge/headers"))
-        }
-        binaries.framework {
-            baseName = xcfName
-            xcf.add(this)
-            // KMT-2364: Do NOT re-export Foundation types — their ObjC bridge lives in
-            // foundationKit.framework only. Re-exporting causes duplicate ObjC class
-            // registration, corrupting the BackRef→ObjHeader* mapping.
-            // export(project(":foundation:KMPFoundation"))
-            binaryOption("embedRuntime", "false")
-            binaryOption("externalKlibs", "com.example.kmp.foundation")
-            val suffix = if (buildType == NativeBuildType.DEBUG) "debug" else "release"
-            linkerOpts(
-                "-framework", "foundationKit",
-                "-F", "${projectDir}/../../foundation/KMPFoundation/build/bin/iosArm64/${suffix}Framework"
-            )
-        }
-    }
-
-    iosSimulatorArm64 {
-        compilations["main"].cinterops.create("businessBridge") {
-            defFile(project.file("../business-bridge/businessBridge.def"))
-            includeDirs(project.file("../business-bridge/headers"))
-        }
-        binaries.framework {
-            baseName = xcfName
-            xcf.add(this)
-            // KMT-2364: Do NOT re-export Foundation types (see iosArm64 comment above).
-            // export(project(":foundation:KMPFoundation"))
-            binaryOption("embedRuntime", "false")
-            binaryOption("externalKlibs", "com.example.kmp.foundation")
-            val suffix = if (buildType == NativeBuildType.DEBUG) "debug" else "release"
-            linkerOpts(
-                "-framework", "foundationKit",
-                "-F", "${projectDir}/../../foundation/KMPFoundation/build/bin/iosSimulatorArm64/${suffix}Framework"
-            )
-        }
-    }
-
-    sourceSets {
-        commonMain {
-            dependencies {
-                api(project(":foundation:KMPFoundation"))
-                implementation(libs.kotlin.stdlib)
-            }
-        }
-
-        // iosBridgeMain: same srcDir pattern as foundation.
-        getByName("iosArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-        getByName("iosSimulatorArm64Main") {
-            kotlin.srcDir("src/iosBridgeMain/kotlin")
-        }
-
-        iosMain {
-            dependencies {
-                // Cinterop bindings are generated directly from :business:business-bridge headers.
-            }
-        }
-    }
-}
-
-// ─── CocoaPods delivery tasks ─────────────────────────────────────────────────
+// ─── KMPBusiness — XCFramework delivery module ────────────────────────────────
+//
+// This module contains NO Kotlin source files and NO compilation targets.
+// All Business Kotlin code, cinterop bridge, and iOS framework configuration
+// live in :business:businessCommon.
+//
+// KMPBusiness's sole responsibility is CocoaPods delivery:
+//   1. Trigger businessCommon's assembleBusinessKitXXXXXCFramework task.
+//   2. Copy businessKit.podspec alongside the XCFramework output.
+//   3. Inject bridge ObjC headers so Swift sees full protocol definitions.
+//
+// iOS app integrates via:
+//   pod 'businessKit', :path => 'business/businessCommon/build/XCFrameworks/debug'
 
 /**
- * Copy business bridge headers into every framework slice, and patch the umbrella
- * header so Swift can see the full ObjC protocol definitions (same pattern as foundation).
+ * Copy business bridge headers into every businessKit.framework slice and patch
+ * the umbrella header (same pattern as KMPFoundation / foundationCommon).
  */
 fun injectBridgeHeaders(xcframeworkDir: File) {
     val bridgeHeadersDir = file("../business-bridge/headers")
@@ -108,29 +36,30 @@ fun injectBridgeHeaders(xcframeworkDir: File) {
         }
 }
 
+fun businessCommonXCFrameworkDir(variant: String): File =
+    file("../businessCommon/build/XCFrameworks/$variant")
+
 tasks.register("buildIOSDebug") {
-    description = "Build iOS debug XCFramework and copy podspec for CocoaPods local integration"
+    description = "Build iOS debug XCFramework (via businessCommon) and copy podspec"
     group = "kotlin multiplatform"
-    dependsOn("assembleBusinessKitDebugXCFramework")
+    dependsOn(":business:businessCommon:assembleBusinessKitDebugXCFramework")
     notCompatibleWithConfigurationCache("copies podspec file at execution time")
     doLast {
-        val spec = file("businessKit.podspec")
-        val target = file("build/XCFrameworks/debug")
-        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
+        val target = businessCommonXCFrameworkDir("debug")
+        file("businessKit.podspec").copyTo(file("${target}/businessKit.podspec"), overwrite = true)
         injectBridgeHeaders(target.resolve("businessKit.xcframework"))
         println("✅ businessKit debug built.\n   pod 'businessKit', :path => '${target}'")
     }
 }
 
 tasks.register("buildIOSRelease") {
-    description = "Build iOS release XCFramework and copy podspec for CocoaPods local integration"
+    description = "Build iOS release XCFramework (via businessCommon) and copy podspec"
     group = "kotlin multiplatform"
-    dependsOn("assembleBusinessKitReleaseXCFramework")
+    dependsOn(":business:businessCommon:assembleBusinessKitReleaseXCFramework")
     notCompatibleWithConfigurationCache("copies podspec file at execution time")
     doLast {
-        val spec = file("businessKit.podspec")
-        val target = file("build/XCFrameworks/release")
-        spec.copyTo(file("${target}/businessKit.podspec"), overwrite = true)
+        val target = businessCommonXCFrameworkDir("release")
+        file("businessKit.podspec").copyTo(file("${target}/businessKit.podspec"), overwrite = true)
         injectBridgeHeaders(target.resolve("businessKit.xcframework"))
         println("✅ businessKit release built.\n   pod 'businessKit', :path => '${target}'")
     }
