@@ -17,20 +17,30 @@
         completion:(void (^)(NSString * _Nullable responseBody,
                              NSInteger statusCode,
                              NSString * _Nullable errorMessage))completion {
-    // Stub: call completion synchronously so the Kotlin lambda is still on the
-    // call stack when it fires — avoids K/N GC prematurely collecting the lambda
-    // when an async dispatch (background queue) holds the only ObjC retain.
+    // Stub: simulate a short async round-trip.
     //
-    // The "async" effect the UI sees comes from Swift's DispatchQueue.main.async
-    // inside the Kotlin callback, which schedules the UI update on the next
-    // run-loop turn regardless of which thread calls completion here.
+    // MUST call completion on the MAIN queue (not a background GCD queue).
+    // Root cause of the previous crash:
+    //   When completion fired on a background thread, K/N ObjC wrapper objects
+    //   were dealloc'd on that background thread.  K/N's ObjC dealloc path sent
+    //   an unrecognised selector to __NSGenericDeallocHandler → SIGABRT.
+    // K/N's main worker thread handles ObjC dealloc correctly; background GCD
+    // threads do not (they are not K/N-managed threads).
     //
-    // In production: perform a real URLSession request and call completion(...)
-    // on the main queue from the URLSession completion handler.  Pass the
-    // URLSessionTask back to the caller so it can be cancelled if needed.
-    NSString *stub = [NSString stringWithFormat:
-        @"{\"status\":\"ok\",\"url\":\"%@\",\"method\":\"%@\"}", url, method];
-    completion(stub, 200, nil);
+    // In production: perform a real URLSession request and dispatch the completion
+    // handler back to the main queue before calling this block.
+    NSString *urlCopy    = [url copy];
+    NSString *methodCopy = [method copy];
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(),                          // ← main queue, not global
+        ^{
+            NSString *stub = [NSString stringWithFormat:
+                @"{\"status\":\"ok\",\"url\":\"%@\",\"method\":\"%@\"}",
+                urlCopy, methodCopy];
+            completion(stub, 200, nil);
+        }
+    );
 }
 
 @end
