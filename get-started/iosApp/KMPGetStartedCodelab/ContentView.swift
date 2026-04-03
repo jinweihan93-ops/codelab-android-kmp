@@ -14,6 +14,33 @@ struct ContentView: View {
     @State private var kmt2364Status: String = "⏳ checking..."
     @State private var kmt2364Color: Color = .gray
 
+    // Diagnostic helpers to isolate which K/N call crashes in body
+    var platformString: String {
+        NSLog("[KMT-2364-BODY] PRE platform()")
+        let r = foundationKit.Platform_iosKt.platform()
+        NSLog("[KMT-2364-BODY] POST platform(): %@", r)
+        return r
+    }
+    var userTagString: String {
+        NSLog("[KMT-2364-BODY] PRE UserService()")
+        let svc = businessKit.UserService()
+        NSLog("[KMT-2364-BODY] POST UserService()")
+        NSLog("[KMT-2364-BODY] PRE currentUser()")
+        let user = svc.currentUser()
+        NSLog("[KMT-2364-BODY] POST currentUser()")
+        NSLog("[KMT-2364-BODY] PRE formatUserTag()")
+        let tag = svc.formatUserTag(user: user)
+        NSLog("[KMT-2364-BODY] POST formatUserTag(): %@", tag)
+        return tag
+    }
+    // Direct Swift-side User creation test (bypasses Kotlin call chain)
+    var swiftUserTest: String {
+        NSLog("[KMT-2364-BODY] PRE Swift User init")
+        let u = businessKit.User(id: "swift-test", name: "Swift Test", platform: "iOS")
+        NSLog("[KMT-2364-BODY] POST Swift User init id=%@", u.id)
+        return u.id
+    }
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -23,12 +50,11 @@ struct ContentView: View {
                         Image(systemName: "globe")
                             .imageScale(.large)
                             .foregroundStyle(.tint)
-                        Text("Hello, \(foundationKit.Platform_iosKt.platform())!")
+                        Text("Hello, \(platformString)!")
                     }
 
-                    let userService = businessKit.UserService()
-                    let tag = userService.formatUserTag(user: userService.currentUser())
-                    Text("User: \(tag)")
+                    Text("SwiftUser: \(swiftUserTest)")
+                    Text("User: \(userTagString)")
                         .font(.caption)
 
                     Divider()
@@ -39,7 +65,11 @@ struct ContentView: View {
                             .font(.system(.body, design: .monospaced))
                             .foregroundColor(kmt2364Color)
                     }
-                    .onAppear { checkKmt2364() }
+                    .onAppear {
+                        checkKmt2364()
+                        // Auto-run Phase 2 tests so they appear in simctl logs
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { runPhase2Tests() }
+                    }
 
                     Divider()
 
@@ -201,6 +231,42 @@ struct ContentView: View {
         let req: Any = foundationKit.TypeTestModelsKt.createRequest(endpoint: "/api/users")
         let resp200: Any = foundationKit.TypeTestModelsKt.createResponse(code: 200, body: "ok", source: nil)
 
+        // PURE KOTLIN: create+read without ANY ObjC bridge (definitive isolation test)
+        let pureKotlin = foundationKit.TypeTestModelsKt.createAndReadInKotlin()
+        NSLog("[KMT-2364-PURE] createAndReadInKotlin()='%@' (expect code=200 body=test-body)", pureKotlin)
+
+        // K/N-side field dump: bypasses ObjC bridge, reads fields purely in Kotlin
+        let kndump = foundationKit.TypeTestModelsKt.debugDumpResponse(r: resp200 as! foundationKit.ResponseResult)
+        NSLog("[KMT-2364-KN] K/N direct dump: %@", kndump)
+        let kndumpAny = foundationKit.TypeTestModelsKt.debugDumpAnyResponse(obj: resp200)
+        NSLog("[KMT-2364-KN] K/N dump via Any: %@", kndumpAny)
+
+        // Diagnostics to isolate NSString→K/N vs K/N→NSString bridge issues
+        let r200 = resp200 as! foundationKit.ResponseResult
+        NSLog("[KMT-2364-DIAG] resp200.code=%d (expect 200)", r200.code)
+        NSLog("[KMT-2364-DIAG] resp200.body='%@' (expect ok)", r200.body)
+        // No-arg factory: K/N String built purely in Kotlin, no Swift String input
+        let testResp = foundationKit.TypeTestModelsKt.createTestResponse() as! foundationKit.ResponseResult
+        NSLog("[KMT-2364-DIAG] createTestResponse().code=%d", testResp.code)
+        NSLog("[KMT-2364-DIAG] createTestResponse().body='%@' (expect test-body)", testResp.body)
+        // Accessor function: reads body field via RAUW'd foundation function
+        let bodyViaAccessor = foundationKit.TypeTestModelsKt.responseGetBody(r: r200)
+        NSLog("[KMT-2364-DIAG] responseGetBody(resp200)='%@'", bodyViaAccessor)
+        // requestGetEndpoint: test NSString→K/N String for req
+        let reqCast = req as! foundationKit.RequestPayload
+        let endpoint = foundationKit.TypeTestModelsKt.requestGetEndpoint(r: reqCast)
+        NSLog("[KMT-2364-DIAG] requestGetEndpoint='%@' (expect /api/users)", endpoint)
+
+        // DIAG-DIRECT: create ResponseResult directly via ObjC init (bypasses K/N factory bridge)
+        let directResp = foundationKit.ResponseResult(code: 200, body: "direct-init", source: nil)
+        NSLog("[KMT-2364-DIAG] directResp.code=%d (expect 200)", directResp.code)
+        NSLog("[KMT-2364-DIAG] directResp.body='%@' (expect direct-init)", directResp.body)
+
+        // DIAG-SHAREDDATA: test SharedData field access from Swift (isolate if ALL types broken)
+        let sd = foundationKit.SharedDataKt.createSharedData(id: 99, message: "probe")
+        NSLog("[KMT-2364-DIAG] sd.id=%d (expect 99)", sd.id)
+        NSLog("[KMT-2364-DIAG] sd.message='%@' (expect probe)", sd.message)
+
         // --- T1: is-check on plain data classes ---
         total += 1
         let isReq = net.isRequest(obj: req)
@@ -215,6 +281,17 @@ struct ContentView: View {
         // --- T2: Takes A returns B (Any→as RequestPayload→execute→ResponseResult) ---
         total += 1
         let resp = net.processAnyRequest(obj: req)
+        // Diagnostics: log ObjC class and try foundation cast
+        NSLog("[KMT-2364-P2] resp ObjC class: %@", NSStringFromClass(type(of: resp)))
+        if let fndResp = resp as? foundationKit.ResponseResult {
+            NSLog("[KMT-2364-P2] resp as foundationKit.ResponseResult: body=%@", fndResp.body)
+        } else {
+            NSLog("[KMT-2364-P2] resp is NOT a foundationKit.ResponseResult")
+        }
+        // Also test resp200 body from foundation
+        if let fndResp200 = resp200 as? foundationKit.ResponseResult {
+            NSLog("[KMT-2364-P2] resp200 foundationKit body=%@", fndResp200.body)
+        }
         let t2ok = resp.body == "OK from /api/users"
         results.append("[\(t2ok ? "✅" : "❌")] T2: Takes A returns B")
         results.append("  Any→as RequestPayload→execute→ResponseResult")
@@ -311,6 +388,19 @@ struct ContentView: View {
         for line in results { NSLog("[KMT-2364-P2] %@", line) }
         NSLog("[KMT-2364-P2] ============================================")
         NSLog("[KMT-2364-P2] RESULT: %d/%d passed", passed, total)
+
+        // Write results to file for CLI capture
+        let output = results.joined(separator: "\n")
+        // Write to Documents (accessible from simulator filesystem)
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let docFile = docs.appendingPathComponent("kmt2364_results.txt")
+            try? output.write(to: docFile, atomically: true, encoding: .utf8)
+            NSLog("[KMT-2364-P2] Results written to Documents: %@", docFile.path)
+        }
+        // Also write to /tmp
+        let tmpFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("kmt2364_results.txt")
+        try? output.write(to: tmpFile, atomically: true, encoding: .utf8)
+        NSLog("[KMT-2364-P2] Results written to tmp: %@", tmpFile.path)
     }
 }
 
